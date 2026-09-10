@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: 验证（语法检查 + 加载冒烟 + 打包）
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 安装 Node 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      # 纯 JS 包：语法检查两个入口文件
+      - name: 语法检查
+        run: |
+          node --check index.js
+          node --check install-patch.mjs
+
+      # index.js 顶层无副作用，可安全导入；install-patch.mjs 是可执行脚本
+      # （导入即运行补丁流程），只能做语法检查，不能导入
+      - name: 加载冒烟测试
+        run: node --input-type=module -e 'await import("./index.js"); console.log("index.js 加载成功")'
+
+      - name: 打包检查（tarball 内容与体积）
+        run: |
+          npm pack
+          tar tzf pi-thinking-header-*.tgz
