@@ -4,12 +4,15 @@ dsh 风格的 pi thinking 显示插件：带 token 计数的单行标题 + 折�
 
 ```
 展开时：                                        折叠时（ctrl+t / 点击标题行）：
-  Thinking (~2.50k tokens)                        流式中：Thinking (~2.50k tokens) · …尾随最新内容保持可见
-  模型思考全文…                                   结束后：Thinking (~2.50k tokens) · 第一行内容…
-  正式回复…                                       正式回复…
+  流式中：Thinking…                             流式中：Thinking (~2.50k tokens) · …尾随最新内容保持可见
+  结束后：Thinking (~2.50k tokens)               结束后：Thinking (~2.50k tokens) · 第一行内容…
+  模型思考全文…（流式中仅最后一行刷新）             正式回复…
+  正式回复…
 ```
 
-- token 数量为本地估算：`ceil(chars / 4)`，流式输出时实时增长
+- token 数量为本地估算：`ceil(chars / 4)`。折叠预览中流式实时增长；展开时标题行
+  在流式期间保持稳定（只显示 `Thinking…`），块结束后才显示最终计数——pi 按整行连续
+  区间重绘，标题行的计数若每个 chunk 都变化，会把前面的思考行与最新行一起擦除重绘
 - 小数点位数可配置（默认 2 位）：`/thinking-header decimals <0-6>`，或直接编辑
   配置文件 `~/.pi/agent/thinking-header.json`（`{"decimals": 2}`）。例如默认效果
   `2.50k`；`decimals: 0` → `3k`；`decimals: 4` → `2.5000k`。两种模式均实时读取
@@ -73,10 +76,13 @@ node <包目录>/install-patch.mjs
 ```
 
 - 每条消息独立的 token 计数与预览（含历史消息）
+- 展开态标题行流式期间字节级稳定（`Thinking…`）：折叠更新只重绘最后一行，
+  之前的思考行不会被一起擦除重绘；块结束后标题行才出现最终计数（回复流式时
+  已结束的思考块直接显示最终计数）
 - 折叠态严格单行、宽度感知截断、点击切换
 - 流式期间折叠预览滚动跟随最新行行尾（dsh 同款），结束后回到第一行
 - 小数点位数渲染时实时读取配置文件（mtime 缓存），与降级模式共享同一份配置
-- 幂等；自动从 v1/v2/v3/v3.1 patch 迁移（恢复原始备份后重新应用；早期 v3
+- 幂等；自动从 v1/v2/v3/v3.1/v3.2 patch 迁移（恢复原始备份后重新应用；早期 v3
   折叠组件缺 `invalidate()`、退出/切换模式时触发 `this.child.invalidate is not
   a function` 崩溃且无备份时，会先原地热修复）；`pi update` 后重跑一次即可；
   插件包更新后也建议重跑 `/thinking-header patch` 使 patch 与 extension 版本一致
@@ -93,7 +99,8 @@ extension 保持惰性（避免双标题），请运行 `/thinking-header patch`
 **未检测到 patch 时**自动进入降级模式：
 
 - 展开的 thinking：通过 markdown transformer 前置 `Thinking (~N tokens)` 标题行
-  （按块正确计数，`pi update` 后依然有效，无需维护）
+  （按块正确计数，`pi update` 后依然有效，无需维护）。流式期间同样保持稳定
+  （`Thinking…`），块结束后显示最终计数，避免正文旧行被一起重绘
 - 折叠的 thinking：pi 的 extension API 只暴露一个全局 label，插件会在每条
   assistant 消息结束后将其更新为最新消息的 `计数 · 预览`。局限：转录里更早的
   折叠块也会显示最新 label —— 需要按消息独立显示请打 bundle patch
@@ -104,7 +111,7 @@ extension 保持惰性（避免双标题），请运行 `/thinking-header patch`
 | 文件 | 说明 |
 |------|------|
 | `index.js` | pi extension（模式检测 + 降级实现，含流式行尾跟随 label） |
-| `install-patch.mjs` | 完整模式安装器（v3.2 bundle patch，渲染时读取 decimals 配置） |
+| `install-patch.mjs` | 完整模式安装器（v3.3 bundle patch，渲染时读取 decimals 配置） |
 | `package.json` | pi 包清单（`pi.extensions`） |
 
 ## License

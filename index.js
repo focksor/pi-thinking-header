@@ -7,7 +7,11 @@
  *
  *   Thinking (~2.50k tokens)
  *
- * - Expanded:  header line + full thinking text
+ * - Expanded:  header line + full thinking text; while the block streams the
+ *   header line stays byte-stable ("Thinking…") — pi's TUI redraws whole
+ *   lines over the contiguous changed range, so any header change would
+ *   redraw every earlier thinking line together with the latest one. The
+ *   token count appears once the block settles.
  * - Collapsed: single line — header + a preview of the thinking content that
  *   follows dsh's ReasoningRow: while streaming it shows the LATEST line with
  *   the window pinned to its tail (leading ellipsis — the line "scrolls" as
@@ -23,7 +27,9 @@
  * 2. FALLBACK MODE (pure extension API) — used when the bundle is unpatched:
  *    - Expanded thinking: prepends a `Thinking (~N tokens)` header via a
  *      markdown transformer (correct per-block counts, works everywhere,
- *      survives pi updates).
+ *      survives pi updates). Same streaming-stable header as full mode: while
+ *      `ctx.isStreaming` the header stays "Thinking…" and only the final
+ *      count is shown once the block settles.
  *    - Collapsed thinking: updates the global hidden-thinking label on each
  *      assistant message with the latest count + preview. Limitation: pi's
  *      extension API only exposes ONE global label, so collapsed blocks in
@@ -280,7 +286,7 @@ export default function (pi) {
           }
           if (state.patched) {
             ctx.ui.notify(
-              `pi-thinking-header: full-mode patch already applied (v3.2) — decimals = ${getDecimals()}`,
+              `pi-thinking-header: full-mode patch already applied (v3.3) — decimals = ${getDecimals()}`,
               "info",
             );
             return;
@@ -317,7 +323,7 @@ export default function (pi) {
       const mode = !state.found
         ? "fallback (pi installation not detected)"
         : state.patched
-          ? "full (bundle patch v3.2 applied)"
+          ? "full (bundle patch v3.3 applied)"
           : "fallback (bundle unpatched — /thinking-header patch enables full mode)";
       ctx.ui.notify(
         "pi-thinking-header\n" +
@@ -340,11 +346,17 @@ export default function (pi) {
 
   // ---------------- FALLBACK MODE (pure extension API) ----------------
 
-  // Expanded thinking: per-block header with token count.
+  // Expanded thinking: per-block header with token count. While the block is
+  // still streaming the header MUST stay byte-stable ("Thinking…"): pi's TUI
+  // diffs whole lines and rewrites the contiguous [firstChanged..lastChanged]
+  // range, so any header change on every chunk would erase+redraw every
+  // earlier thinking line together with the latest one. The token count
+  // appears once the block settles (isStreaming flips to false).
   pi.registerMarkdownTransformer((markdown, ctx) => {
     if (ctx?.messageType !== "assistant-thinking") return markdown;
     const text = markdown.trim();
     if (!text) return markdown;
+    if (ctx.isStreaming) return `*Thinking…*\n\n${markdown}`;
     return `*Thinking (~${formatTokens(Math.ceil(text.length / 4))} tokens)*\n\n${markdown}`;
   });
 
@@ -354,7 +366,10 @@ export default function (pi) {
   // once the message settles (message_end) it returns to the first line.
   // Limitation: pi's extension API only exposes ONE global label, so collapsed
   // blocks in older transcript messages will show the most recent label. Run
-  // /thinking-header patch for per-message fidelity.
+  // /thinking-header patch for per-message fidelity. Re-setting the SAME label
+  // is skipped: pi pushes the global label into every message component on
+  // each set, so a no-op set would still rebuild all of them.
+  let lastLabel = null;
   const updateLabel = async (message, ctx, running) => {
     try {
       if (!message || message.role !== "assistant") return;
@@ -362,7 +377,10 @@ export default function (pi) {
         (c) => c?.type === "thinking" && typeof c.thinking === "string" && c.thinking.trim(),
       );
       if (blocks.length === 0) return;
-      ctx.ui.setHiddenThinkingLabel(thinkingLabel(blocks, running));
+      const label = thinkingLabel(blocks, running);
+      if (label === lastLabel) return;
+      lastLabel = label;
+      ctx.ui.setHiddenThinkingLabel(label);
     } catch {
       // display-only; never break the session over a label
     }

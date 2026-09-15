@@ -1,6 +1,6 @@
 {
   "name": "pi-thinking-header",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "dsh-style thinking display for pi: one-line header with token count (configurable decimals, default 2); collapsed thinking shows a single-line content preview",
   "keywords": [
     "pi-package",

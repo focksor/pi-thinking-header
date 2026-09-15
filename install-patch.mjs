@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * pi-thinking-header — FULL MODE installer (bundle patch, v3.2).
+ * pi-thinking-header — FULL MODE installer (bundle patch, v3.3).
  *
  * Patches pi's AssistantMessageComponent for dsh-style thinking rendering:
  *
@@ -46,8 +46,12 @@ const MD_TAIL =
   ",this.outputPad,0,this.markdownTheme,{color:text=>theme.fg(\"thinkingText\",text),italic:!0}," +
   '{transform:createMarkdownTransform("assistant-thinking",this.isStreaming,this.markdownTransformers)})';
 
+// hasVisibleContentAfter is in scope at the patch site (updateContent): a
+// thinking block is "still streaming" iff the message is streaming AND nothing
+// visible follows it — after the reply starts, earlier blocks show their final
+// count instead of staying on "Thinking…".
 const HEADER_TEXT =
-  'new Text(theme.italic(theme.fg("thinkingText",this.thinkingLabelText(thinkingBlocks))),this.outputPad,0)';
+  'new Text(theme.italic(theme.fg("thinkingText",this.thinkingHeaderLabel(thinkingBlocks,this.isStreaming&&!hasVisibleContentAfter))),this.outputPad,0)';
 
 const ANCHOR2 =
   'thinkingComponent=hidden?new Text(theme.italic(theme.fg("thinkingText",this.hiddenThinkingLabel)),this.outputPad,0):new Markdown(thinkingBlocks.' +
@@ -58,11 +62,11 @@ const ANCHOR2 =
 // ---------- injected code ----------
 // Current patch version; also the key for mode detection (family-wide) and
 // migration ("any older family member → restore pristine backup, re-apply").
-const CURRENT_MARKER = "pi-thinking-header:v3.2";
+const CURRENT_MARKER = "pi-thinking-header:v3.3";
 
 // Marker comment doubles as the extension's mode-detection key.
 const HELPER =
-  "/*pi-thinking-header:v3.2*/" +
+  "/*pi-thinking-header:v3.3*/" +
   // decimals config: per-instance cache keyed on the config file's mtime
   // (mtimeNs BigInt — ns precision beats same-ms collisions). Lazy ??= init
   // (no class fields needed) + a reader that resolves
@@ -73,14 +77,26 @@ const HELPER =
   'p=(process.env.PI_CODING_AGENT_DIR||os.homedir()+"/.pi/agent")+"/thinking-header.json",st=fs.statSync(p,{bigint:!0});' +
   'if(st.mtimeNs!==this._pthT){let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8"))}catch{}' +
   "this._pthT=st.mtimeNs,this._pthC=c}}catch{this._pthC=null}return this._pthC||{}}" +
-  // One-line label: "Thinking (~2.50k tokens)" (prefix honours a custom label, minus trailing dots)
-  // Decimals come from _piCfg(): integer 0–6 wins, anything else → 2. No
-  // trailing-zero stripping: the setting is authoritative (2.50k stays 2.50k).
-  'thinkingLabelText(blocks){let chars=0;for(let b of blocks)chars+=b.length;' +
+  // Token count: local estimate ceil(chars / 4). Decimals come from _piCfg():
+  // integer 0–6 wins, anything else → 2. No trailing-zero stripping: the
+  // setting is authoritative (2.50k stays 2.50k).
+  '_tokensLabel(blocks){let chars=0;for(let b of blocks)chars+=b.length;' +
   "let tokens=Math.ceil(chars/4),c=this._piCfg()," +
-  'd=typeof c.decimals=="number"&&Number.isInteger(c.decimals)&&c.decimals>=0&&c.decimals<=6?c.decimals:2,' +
-  'count=tokens>=1000?(tokens/1000).toFixed(d)+"k":""+tokens;' +
-  'return this.hiddenThinkingLabel.replace(/\\.{3}$/,"")+" (~"+count+" tokens)"}' +
+  'd=typeof c.decimals=="number"&&Number.isInteger(c.decimals)&&c.decimals>=0&&c.decimals<=6?c.decimals:2;' +
+  'return(tokens>=1000?(tokens/1000).toFixed(d)+"k":""+tokens)+" tokens"}' +
+  // Live one-line label: "Thinking (~2.50k tokens)" (prefix honours a custom
+  // label, minus trailing dots). Used by the collapsed row ONLY — that row is
+  // a single screen line, so a live count redraws just that one line.
+  'thinkingLabelText(blocks){return this.hiddenThinkingLabel.replace(/\\.{3}$/,"")+" (~"+this._tokensLabel(blocks)+")"}' +
+  // Expanded header. While the block is ACTIVELY streaming (it is the message's
+  // last content and chunks still arrive) it renders the bare prefix + "…" and
+  // MUST stay byte-stable: pi's TUI diffs whole lines and rewrites the
+  // contiguous [firstChanged..lastChanged] range, so changing the header on
+  // every chunk would erase+redraw every earlier thinking line together with
+  // the latest one. The final count appears once the block settles (stream
+  // ends or later content starts), when the block no longer re-renders per
+  // chunk and no redraw cascade is possible.
+  'thinkingHeaderLabel(blocks,streaming){let p=this.hiddenThinkingLabel.replace(/\\.{3}$/,"");if(streaming)return p+"…";return p+" (~"+this._tokensLabel(blocks)+")"}' +
   // Collapsed state: plain-object component rendering ONE line:
   // label + " · " + preview, truncated to the render width (CJK-aware).
   // dsh ReasoningRow parity: running → latest non-empty line with the window
@@ -163,7 +179,7 @@ const TAIL_BROKEN = "padTotal)]}}}";
 const TAIL_FIXED = "padTotal)]},invalidate(){}}}";
 
 if (src.includes(CURRENT_MARKER) && src.includes(TAIL_FIXED)) {
-  console.log(`Already patched (v3.2): ${chunkPath}`);
+  console.log(`Already patched (v3.3): ${chunkPath}`);
   process.exit(0);
 }
 
@@ -181,7 +197,7 @@ if (src.includes("pi-thinking-header") || src.includes("thinkingLabelText(")) {
     writeFileSync(chunkPath, src);
     console.log("Hotfixed (early v3 → v3.1): added missing invalidate() to the collapsed-thinking component");
     console.log(`File:         ${chunkPath}`);
-    console.log("Re-run the installer to update the patch to v3.2 (configurable decimals).");
+    console.log("Re-run the installer to update the patch to the latest version.");
     process.exit(0);
   }
   if (!existsSync(backup)) {
@@ -205,6 +221,6 @@ if (!src.includes(CURRENT_MARKER) || !src.includes("piThinkingCollapsed(") || !s
 
 verifyESM(src);
 writeFileSync(chunkPath, src);
-console.log(`Patched (v3.2): ${chunkPath}`);
+console.log(`Patched (v3.3): ${chunkPath}`);
 console.log(`Backup:       ${backup}`);
 console.log("Revert with:  cp '" + backup + "' '" + chunkPath + "'");
